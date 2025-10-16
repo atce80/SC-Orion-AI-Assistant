@@ -61,4 +61,4 @@ CRITICAL STEP: This key is your personal credential for accessing Google's AI mo
 
 Once saved, the app will securely store it using Firebase and you'll be ready to start sending commands to your AI assistant!
 
-Buy me a coffee if you like it.
+**Buy me a coffee if you like it.**
