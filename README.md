@@ -4,9 +4,11 @@ Orion AI Pilot Assistant: Command Console
 
 Link: https://atce80.github.io/SC-Orion-AI-Assistant/Star%20Citizen%20AI%20Pilot%20Assistant.html
 
-Orion AI is a specialized, single-file web application designed to act as an in-universe command assistant for the Star Citizen universe. It leverages the power of the Gemini API and Google Search Grounding to provide real-time, context-aware responses to complex, natural language pilot commands.
+You can bookmark the link and directly access the app. No need to download anything. 
 
-Key Features
+**Orion AI is a specialized, single-file web application designed to act as an in-universe command assistant for the Star Citizen universe. It leverages the power of the Gemini API and Google Search Grounding to provide real-time, context-aware responses to complex, natural language pilot commands.**
+
+**Key Features**
 
 1. Context-Aware Command Execution
 
@@ -25,7 +27,7 @@ Your Gemini API key is securely saved to a private area in a Firebase Firestore 
 
 **All you need is a free Gemini API Key and you are good to go.**
 
-How to Get Your Gemini API Key
+**How to Get Your Gemini API Key**
 1. Go to Google AI Studio
 Open your web browser and navigate to the official developer site: https://aistudio.google.com/ .
 
