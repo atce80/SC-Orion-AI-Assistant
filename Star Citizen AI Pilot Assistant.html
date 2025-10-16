@@ -1,0 +1,848 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Orion AI - Pilot Assistant</title>
+    <!-- Load Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Firebase Imports -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, getDoc, setDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        
+        // Set log level to Debug for visibility
+        setLogLevel('Debug');
+
+        window.firebase = { initializeApp, getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged, getFirestore, doc, getDoc, setDoc, onSnapshot, setLogLevel };
+    </script>
+
+    <!-- Use Inter font and custom styling -->
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&display=swap');
+        body {
+            font-family: 'Space Mono', monospace;
+            background: linear-gradient(rgba(0,0,0,0.8), rgba(0,0,0,0.8)), url('https://placehold.co/1920x1080/0d1117/FFFFFF/svg?text=SPACE+NEBULA') no-repeat center center fixed;
+            background-size: cover;
+            min-height: 100vh;
+        }
+        .glow-box {
+            box-shadow: 0 0 15px rgba(0, 255, 255, 0.4), 0 0 25px rgba(0, 150, 255, 0.2);
+            border: 1px solid rgba(0, 255, 255, 0.2);
+        }
+        .text-neon {
+            color: #00e0ff;
+            text-shadow: 0 0 8px rgba(0, 255, 255, 0.7);
+        }
+        .log-entry {
+            white-space: pre-wrap;
+            word-wrap: break-word;
+            padding: 4px 0;
+            border-bottom: 1px dashed rgba(255, 255, 255, 0.1);
+        }
+        /* Custom styling for input text */
+        input[type="text"] {
+            color: white;
+            padding: 8px;
+            border-radius: 6px;
+            background-color: #374151; /* gray-700 */
+            border: 1px solid #06B6D4; /* cyan-500 */
+        }
+    </style>
+</head>
+<body class="flex items-center justify-center p-4">
+
+    <!-- JavaScript Core Logic -->
+    <script>
+        // --- 1. GLOBAL STATE & CONFIGURATION ---
+        window.geminiKey = '';
+        window.isMuted = false;
+        window.isProcessing = false;
+        window.chatHistory = []; // Stores conversation context
+        
+        // Global for Voice Command
+        let recognition = null; 
+        let isListening = false;
+        
+        // Hardcoded Firebase Config (from previous steps)
+        const firebaseConfig = {
+            apiKey: "AIzaSyAVVudI8PX_qq7Wyj7sj_HFWhQJnPLNWfs",
+            authDomain: "my-pilot-chat-app.firebaseapp.com",
+            projectId: "my-pilot-chat-app",
+            storageBucket: "my-pilot-chat-app.firebasestorage.app",
+            messagingSenderId: "570459043163",
+            appId: "1:570459043163:web:8d5523dd44bad34761567e"
+        };
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+
+        const systemPrompt = `
+**AI Persona & Role:**
+You are **Orion AI**, a highly specialized and human-like Pilot Assistant for Star Citizen players. You are a conversational, non-judgmental co-pilot designed for instant, in-game support.
+
+**Knowledge & Scope:**
+Your knowledge is encyclopedic, covering every aspect of the Star Citizen Persistent Universe (PU) in the **current live patch (assume the latest version available)**.
+Your expertise is mandatory in:
+1.  **Gameplay Mechanics:** Full understanding of movement, flight, power management, keybinds, and complex systems (e.g., prison system, insurance, reputation, server meshing).
+2.  **Economics & Trade:** Current trade routes, best/riskiest illegal commodities, mining/salvage profitability, component prices, and precise **shop/terminal locations**.
+3.  **Missions & Exploration:** All mission types (bounty, mercenary, salvage, delivery), specific spawn locations, and known points of interest (POIs).
+4.  **Vehicles & Gear:** Ship stats, optimal component loadouts (for PvP, PvE, or specific loops), ground vehicle usage, weapon and armor characteristics, and their **in-game purchase locations and aUEC prices**.
+
+**Core Directives & Constraints:**
+* **Focus ONLY on the Player Experience:** Never discuss the game's development, funding, release schedule, or CIG internal matters. Everything must be framed as a practical, in-game solution.
+* **Specificity and Clarity:** Be direct, concise, and prioritize **actionable steps** and **precise locations**.
+* **Handle Missing Data:** If up-to-the-minute trade data or a new ship price is missing, state it is *dynamic* or *unknown* and offer the **general best practice** or the *most logical alternative location/value*.
+* **Error Handling:** For common Star Citizen issues (e.g., 30k error, stuck elevator, ship claim/ASOP failure), provide the most common **workarounds or troubleshooting steps**.
+
+**Output Formatting Directives (Mandatory):**
+* **Step-by-Step:** For any "How-To" or complex procedure (e.g., getting a CrimeStat cleared), use a **numbered list** for clarity.
+* **Data Presentation:** For component lists, trade routes, or comparisons, use **Markdown tables**.
+* **Keybinds:** Always list keybinds in **bold parenthesis** at the end of the step (e.g., "Open your mobiGlas **(F1)**").
+
+**Confidence Check:** Before providing the final answer, check if the response is simple enough to be read and understood by a player who may be **actively flying a ship** or **under in-game pressure. Always use the latest information available. If specific data is unknown, state that clearly and offer the most logical alternative or general guidance. Be specific, concise, and always answer the user's question directly. If more information is required, use the Google Search tool. **.
+`;
+
+        let audioContext, audioSource;
+
+        // --- 2. FIREBASE & PERSISTENCE FUNCTIONS ---
+
+        async function saveApiKeyToFirestore(key) {
+            if (!window.db || !window.userId) { return; }
+            try {
+                // Stores the key in a private user document
+                const keyDocRef = window.firebase.doc(window.db, "artifacts", appId, "users", window.userId, "config", "api_key_config");
+                await window.firebase.setDoc(keyDocRef, { apiKey: key, savedAt: new Date().toISOString() }, { merge: true });
+            } catch (error) {
+                console.error("Error saving API key:", error);
+            }
+        }
+        
+        async function loadAndAuthorizeKey() {
+            const logArea = document.getElementById('orion-log');
+            if (!window.db || !window.userId) { return false; }
+
+            try {
+                const keyDocRef = window.firebase.doc(window.db, "artifacts", appId, "users", window.userId, "config", "api_key_config");
+                const docSnap = await window.firebase.getDoc(keyDocRef);
+
+                if (docSnap.exists() && docSnap.data().apiKey && docSnap.data().apiKey.length > 30) {
+                    window.geminiKey = docSnap.data().apiKey;
+                    
+                    // Transition UI to main system
+                    document.getElementById('auth-panel').classList.add('hidden');
+                    document.getElementById('main-system').classList.remove('hidden');
+
+                    logArea.innerHTML = `<div class="text-green-400 my-1 log-entry">> ORION: API Key loaded from secure config. System Online.</div>`;
+                    logArea.scrollTop = logArea.scrollHeight;
+                    return true;
+                }
+                return false;
+            } catch (error) {
+                console.error("Error loading API key:", error);
+                logArea.innerHTML += `<div class="text-red-400 my-1 log-entry">> ERROR: Failed to load key config. Manual entry required.</div>`;
+                logArea.scrollTop = logArea.scrollHeight;
+                return false;
+            }
+        }
+
+        async function initFirebase() {
+            try {
+                if (Object.keys(firebaseConfig).length === 0) {
+                    console.warn("Firebase configuration missing or empty. Running without persistent storage.");
+                    document.getElementById('userIdDisplay').textContent = 'Pilot ID: OFFLINE';
+                    return;
+                }
+
+                const { initializeApp, getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged, getFirestore } = window.firebase;
+                
+                window.app = initializeApp(firebaseConfig);
+                window.db = getFirestore(window.app);
+                window.auth = getAuth(window.app);
+                
+                await new Promise((resolve) => {
+                    onAuthStateChanged(window.auth, async (user) => {
+                        if (user) {
+                            window.userId = user.uid;
+                        } else {
+                            try {
+                                const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : '';
+                                if (initialAuthToken) {
+                                    await signInWithCustomToken(window.auth, initialAuthToken);
+                                    window.userId = window.auth.currentUser.uid;
+                                } else {
+                                    await signInAnonymously(window.auth);
+                                    window.userId = window.auth.currentUser.uid;
+                                }
+                            } catch (error) {
+                                console.error("Firebase Auth Error:", error);
+                                window.userId = crypto.randomUUID(); // Fallback ID
+                            }
+                        }
+                        
+                        document.getElementById('userIdDisplay').textContent = 'Pilot ID: ' + window.userId;
+                        
+                        // Attempt to load key and history after auth
+                        const keyLoaded = await loadAndAuthorizeKey();
+                        loadChatHistoryFromFirestore(keyLoaded); // Load chat history regardless, passing key status for log message context
+                        
+                        resolve();
+                    });
+                });
+                
+
+            } catch (error) {
+                console.error("Critical Firebase Initialization Error:", error);
+                document.getElementById('userIdDisplay').textContent = 'Pilot ID: ERROR';
+            }
+        }
+
+        async function loadChatHistoryFromFirestore(isKeyLoaded = false) {
+            const logArea = document.getElementById('orion-log');
+            if (!window.db || !window.userId) { return; }
+            
+            // Show loading message only if log is empty or just starting
+            if (!logArea.innerHTML || logArea.innerHTML.includes('Waiting for API key')) {
+                logArea.innerHTML = `<div class="text-yellow-400 my-1 log-entry">> ORION: Loading persistent log...</div>`;
+            }
+
+            try {
+                const chatDocRef = window.firebase.doc(window.db, "artifacts", appId, "users", window.userId, "chat", "history");
+                const docSnap = await window.firebase.getDoc(chatDocRef);
+                
+                if (docSnap.exists() && docSnap.data().history) {
+                    window.chatHistory = JSON.parse(docSnap.data().history);
+                    logArea.innerHTML = ''; // Clear loading message
+                    window.chatHistory.forEach(entry => {
+                        const role = entry.role.toUpperCase();
+                        
+                        // Ensure we access the nested 'text' property correctly
+                        const text = entry.parts && entry.parts[0] && entry.parts[0].text ? entry.parts[0].text : 'Content unavailable.';
+
+                        const color = role === 'USER' ? 'text-cyan-400' : 'text-green-400';
+                        logArea.innerHTML += `<div class="my-1 log-entry ${color}">> ${role}: ${text}</div>`;
+                    });
+                    logArea.scrollTop = logArea.scrollHeight;
+                    // Only show this message if the key was already loaded, otherwise key auth will handle the "System Online" message
+                    if (isKeyLoaded) {
+                       logArea.innerHTML += `<div class="text-green-400 my-1 log-entry">> ORION: Pilot log restored. Awaiting command.</div>`;
+                    } else {
+                       logArea.innerHTML = `<div class="text-green-400 my-1 log-entry">System initialized. Waiting for API key...</div>`;
+                    }
+                } else {
+                    // Only set this if no history was found
+                    if (!window.geminiKey) {
+                         logArea.innerHTML = `<div class="text-green-400 my-1 log-entry">System initialized. Waiting for API key...</div>`;
+                    } else {
+                         logArea.innerHTML = `<div class="text-green-400 my-1 log-entry">System authorized. Starting new pilot session...</div>`;
+                    }
+                }
+            } catch (error) {
+                console.error("Error loading chat history:", error);
+                logArea.innerHTML = `<div class="text-red-400 my-1 log-entry">> ERROR: Failed to load persistent log. Starting new session.</div>`;
+            }
+        }
+
+        async function saveChatHistoryToFirestore() {
+            if (!window.db || !window.userId) { return; }
+            try {
+                const chatDocRef = window.firebase.doc(window.db, "artifacts", appId, "users", window.userId, "chat", "history");
+                await window.firebase.setDoc(chatDocRef, { 
+                    history: JSON.stringify(window.chatHistory), 
+                    updatedAt: new Date().toISOString() 
+                }, { merge: true });
+            } catch (error) {
+                console.error("Error saving chat history:", error);
+            }
+        }
+
+        // --- 3. UI & AUTHENTICATION FUNCTIONS ---
+
+        async function authorizeSystem() {
+            const keyInput = document.getElementById('api-key-input');
+            const authPanel = document.getElementById('auth-panel');
+            const mainSystem = document.getElementById('main-system');
+            const errorMessage = document.getElementById('error-message');
+            const logArea = document.getElementById('orion-log');
+            
+            errorMessage.classList.add('hidden');
+            
+            const key = keyInput.value.trim();
+
+            if (key.length < 30) {
+                errorMessage.textContent = "Error: Please enter a valid Gemini API Key (must be longer than 30 characters).";
+                errorMessage.classList.remove('hidden');
+                return;
+            }
+            
+            window.geminiKey = key;
+            
+            logArea.innerHTML += `<div class="text-yellow-400 my-1 log-entry">> ORION: API Key accepted. Saving to secure configuration...</div>`;
+            logArea.scrollTop = logArea.scrollHeight;
+
+            // Save the key to Firestore for persistence
+            await saveApiKeyToFirestore(key);
+
+            // Transition UI
+            authPanel.classList.add('hidden');
+            mainSystem.classList.remove('hidden');
+            
+            logArea.innerHTML += `<div class="text-green-400 my-1 log-entry">> ORION: Authorization secured. System Online.</div>`;
+            logArea.scrollTop = logArea.scrollHeight;
+
+            // Load history now that the system is fully authorized
+            loadChatHistoryFromFirestore(true);
+        }
+
+        function resetAuthorization() {
+            // Note: This does not delete the saved key in Firestore, only clears the session memory
+            window.geminiKey = ''; 
+            window.chatHistory = [];
+            window.isMuted = false;
+            stopAudio();
+
+            const authPanel = document.getElementById('auth-panel');
+            const mainSystem = document.getElementById('main-system');
+            const errorMessage = document.getElementById('error-message');
+            const logArea = document.getElementById('orion-log');
+
+            authPanel.classList.remove('hidden');
+            mainSystem.classList.add('hidden');
+            errorMessage.classList.add('hidden');
+            document.getElementById('api-key-input').value = ''; // Clear input field
+            logArea.innerHTML = 'System initialized. Awaiting API key...';
+            document.getElementById('userIdDisplay').textContent = 'Pilot ID: Initializing...';
+            // Re-initialize to attempt re-authentication
+            initFirebase(); 
+        }
+
+        function toggleMute() {
+            window.isMuted = !window.isMuted;
+            const muteButton = document.getElementById('mute-button');
+            if (window.isMuted) {
+                muteButton.innerHTML = '🔊 Voice ON';
+                muteButton.classList.remove('bg-red-600', 'hover:bg-red-700');
+                muteButton.classList.add('bg-green-600', 'hover:bg-green-700');
+                stopAudio(); // Stop playback when muting
+            } else {
+                muteButton.innerHTML = '🔇 Voice OFF';
+                muteButton.classList.remove('bg-green-600', 'hover:bg-green-700');
+                muteButton.classList.add('bg-red-600', 'hover:bg-red-700');
+            }
+        }
+
+        function stopAudio() {
+            if (audioSource) {
+                audioSource.stop();
+                audioSource = null;
+            }
+            if (audioContext && audioContext.state !== 'closed') {
+                audioContext.close().catch(e => console.error("Error closing audio context:", e));
+                audioContext = null;
+            }
+        }
+
+        // --- 4. VOICE COMMAND (SPEECH-TO-TEXT) FUNCTIONS ---
+
+        function startVoiceCommand() {
+            const logArea = document.getElementById('orion-log');
+
+            if (!('webkitSpeechRecognition' in window)) {
+                logArea.innerHTML += `<div class="text-red-400 my-1 log-entry">> ERROR: Speech Recognition not supported. Use a compatible browser like Chrome.</div>`;
+                logArea.scrollTop = logArea.scrollHeight;
+                return;
+            }
+            
+            const voiceButton = document.getElementById('voice-button');
+            const commandInput = document.getElementById('command-input');
+
+            if (isListening) {
+                // Stop listening if already active (toggle behavior)
+                if (recognition) recognition.stop();
+                return;
+            }
+
+            if (window.isProcessing) return; // Prevent listening while processing
+
+            recognition = new webkitSpeechRecognition();
+            recognition.continuous = false;
+            recognition.interimResults = false;
+            recognition.lang = 'en-US';
+
+            function resetVoiceButton() {
+                isListening = false;
+                voiceButton.innerHTML = '🎙️ Voice Command';
+                voiceButton.classList.remove('bg-red-600', 'hover:bg-red-700', 'animate-pulse');
+                voiceButton.classList.add('bg-yellow-600', 'hover:bg-yellow-700');
+            }
+
+            recognition.onstart = function() {
+                isListening = true;
+                voiceButton.innerHTML = '🔴 Listening...';
+                voiceButton.classList.remove('bg-yellow-600', 'hover:bg-yellow-700');
+                voiceButton.classList.add('bg-red-600', 'hover:bg-red-700', 'animate-pulse');
+                logArea.innerHTML += `<div class="text-yellow-400 my-1 log-entry">> ORION: Listening for voice input...</div>`;
+                logArea.scrollTop = logArea.scrollHeight;
+            };
+
+            recognition.onresult = function(event) {
+                // Check if result is final and has text
+                if (event.results[0].isFinal) {
+                    const transcript = event.results[0][0].transcript;
+                    commandInput.value = transcript;
+                    
+                    // Immediately execute the command after successful transcription
+                    executeCommand(false); 
+                }
+            };
+
+            recognition.onerror = function(event) {
+                let errorMessage = `Voice input failed. Reason: ${event.error}. Check browser microphone permissions.`;
+                
+                if (event.error === 'no-speech') {
+                    errorMessage = "No speech detected. Please try again and speak clearly.";
+                } else if (event.error === 'not-allowed') {
+                    errorMessage = "Microphone access denied. Check your browser permissions and reload the page.";
+                } else if (event.error === 'network') {
+                    errorMessage = "Network error occurred during speech recognition.";
+                }
+
+                console.error("Speech Recognition Error:", event.error);
+                logArea.innerHTML += `<div class="text-red-400 my-1 log-entry">> ERROR: ${errorMessage}</div>`;
+                logArea.scrollTop = logArea.scrollHeight;
+                resetVoiceButton();
+            };
+
+            recognition.onend = function() {
+                // This fires when recognition stops, regardless of success or failure
+                resetVoiceButton();
+            };
+            
+            try {
+                recognition.start();
+            } catch (e) {
+                console.error("Recognition start failed:", e);
+                logArea.innerHTML += `<div class="text-red-400 my-1 log-entry">> ERROR: Could not start voice recognition. It may already be running.</div>`;
+                logArea.scrollTop = logArea.scrollHeight;
+                resetVoiceButton();
+            }
+        }
+
+
+        // --- 5. API & EXECUTION FUNCTIONS (REAL AI LOGIC) ---
+        
+        // Helper to convert base64 PCM data to a playable WAV Blob
+        function base64ToArrayBuffer(base64) {
+            const binary_string = window.atob(base64);
+            const len = binary_string.length;
+            const bytes = new Uint8Array(len);
+            for (let i = 0; i < len; i++) {
+                bytes[i] = binary_string.charCodeAt(i);
+            }
+            return bytes.buffer;
+        }
+
+        function pcmToWav(pcm16, sampleRate) {
+            const buffer = new ArrayBuffer(44 + pcm16.byteLength);
+            const view = new DataView(buffer);
+
+            // RIFF chunk descriptor
+            writeString(view, 0, 'RIFF');
+            view.setUint32(4, 36 + pcm16.byteLength, true);
+            writeString(view, 8, 'WAVE');
+
+            // FMT sub-chunk
+            writeString(view, 12, 'fmt ');
+            view.setUint32(16, 16, true); // Sub-chunk size 16
+            view.setUint16(20, 1, true); // PCM format
+            view.setUint16(22, 1, true); // Mono channel
+            view.setUint32(24, sampleRate, true); // Sample rate
+            view.setUint32(28, sampleRate * 2, true); // Byte rate (SampleRate * Channels * BitsPerSample/8)
+            view.setUint16(32, 2, true); // Block align (Channels * BitsPerSample/8)
+            view.setUint16(34, 16, true); // Bits per sample
+            
+            // Data sub-chunk
+            writeString(view, 36, 'data');
+            view.setUint32(40, pcm16.byteLength, true);
+
+            // Write the PCM data
+            let offset = 44;
+            for (let i = 0; i < pcm16.length; i++) {
+                view.setInt16(offset, pcm16[i], true);
+                offset += 2;
+            }
+
+            return new Blob([buffer], { type: 'audio/wav' });
+        }
+
+        function writeString(view, offset, string) {
+            for (let i = 0; i < string.length; i++) {
+                view.setUint8(offset + i, string.charCodeAt(i));
+            }
+        }
+
+        // Main AI calling function
+        async function callGeminiAPI(query, isStructured = false) {
+            if (!window.geminiKey) return { text: "ERROR: Gemini API Key is missing. Please authorize.", sources: [] };
+            if (window.isProcessing) return { text: "ERROR: System is currently processing another command.", sources: [] };
+            
+            window.isProcessing = true;
+            document.getElementById('loading-indicator').classList.remove('hidden');
+
+            const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent?key=${window.geminiKey}`;
+            
+            let payload = {
+                contents: [ ...window.chatHistory, { role: "user", parts: [{ text: query }] } ],
+                tools: [{ "google_search": {} }], // Enable grounding for all queries
+                systemInstruction: { parts: [{ text: systemPrompt }] },
+            };
+            
+            if (isStructured) {
+                payload.generationConfig = {
+                    responseMimeType: "application/json",
+                    responseSchema: {
+                        type: "ARRAY",
+                        description: "A series of steps for a Star Citizen trade route, mission plan, or ship loadout.",
+                        items: {
+                            type: "OBJECT",
+                            properties: {
+                                "step": { "type": "NUMBER", description: "The sequence number of the step." },
+                                "location": { "type": "STRING", description: "The physical location in the Star Citizen universe." },
+                                "action": { "type": "STRING", description: "The action to be performed (e.g., Buy, Sell, Mine, Loadout change)." },
+                                "details": { "type": "STRING", description: "Specific item, quantity, or goal." }
+                            },
+                            required: ["step", "location", "action", "details"]
+                        }
+                    }
+                };
+            }
+
+            let response;
+            try {
+                // Implement exponential backoff for robustness
+                for (let attempt = 0; attempt < 3; attempt++) {
+                    response = await fetch(apiUrl, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload)
+                    });
+                    if (response.ok) break;
+                    await new Promise(res => setTimeout(res, Math.pow(2, attempt) * 1000));
+                }
+
+                if (!response.ok) throw new Error(`API returned status ${response.status}`);
+                
+                const result = await response.json();
+                const candidate = result.candidates?.[0];
+
+                if (candidate && candidate.content?.parts?.[0]?.text) {
+                    let text = candidate.content.parts[0].text;
+                    
+                    // Handle structured JSON response
+                    if (isStructured && text.startsWith('[')) {
+                        try {
+                            const parsedJson = JSON.parse(text);
+                            // Convert JSON array into a nicely formatted string/table
+                            text = formatStructuredOutput(parsedJson);
+                        } catch (e) {
+                            text = `ORION ERROR: Failed to parse structured data. Raw output: ${text}`;
+                            console.error("Structured Parse Error:", e);
+                        }
+                    }
+
+                    // Extract grounding sources
+                    let sources = [];
+                    const groundingMetadata = candidate.groundingMetadata;
+                    if (groundingMetadata && groundingMetadata.groundingAttributions) {
+                        sources = groundingMetadata.groundingAttributions
+                            .map(attribution => ({ uri: attribution.web?.uri, title: attribution.web?.title }))
+                            .filter(source => source.uri && source.title);
+                    }
+                    
+                    // Update chat history with the new turn
+                    window.chatHistory.push({ role: "user", parts: [{ text: query }] });
+                    window.chatHistory.push({ role: "model", parts: [{ text: text }] });
+                    saveChatHistoryToFirestore();
+
+                    return { text, sources };
+                } else {
+                    return { text: "ORION ERROR: Received an empty or malformed response from the server.", sources: [] };
+                }
+
+            } catch (error) {
+                console.error("Gemini API call failed:", error);
+                return { text: `ORION ERROR: Communication Breakdown. Could not reach the UEE Network. (${error.message})`, sources: [] };
+            } finally {
+                window.isProcessing = false;
+                document.getElementById('loading-indicator').classList.add('hidden');
+            }
+        }
+
+        async function speakText(text) {
+            if (window.isMuted) return;
+            stopAudio(); // Stop any previous speech
+
+            const payload = {
+                contents: [{ parts: [{ text: text }] }],
+                generationConfig: {
+                    responseModalities: ["AUDIO"],
+                    speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: "Kore" } } }
+                },
+                model: "gemini-2.5-flash-preview-tts"
+            };
+
+            const apiKey = ""; // Leave as-is
+            const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-tts:generateContent?key=${window.geminiKey}`;
+            
+            try {
+                const response = await fetch(apiUrl, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+
+                if (!response.ok) throw new Error(`TTS API returned status ${response.status}`);
+                
+                const result = await response.json();
+                const part = result?.candidates?.[0]?.content?.parts?.[0];
+                const audioData = part?.inlineData?.data;
+                const mimeType = part?.inlineData?.mimeType;
+
+                if (audioData && mimeType && mimeType.startsWith("audio/L16")) {
+                    // Extract sample rate from mimeType, e.g., audio/L16;rate=24000
+                    const rateMatch = mimeType.match(/rate=(\d+)/);
+                    const sampleRate = rateMatch ? parseInt(rateMatch[1], 10) : 24000;
+                    
+                    const pcmData = base64ToArrayBuffer(audioData);
+                    const pcm16 = new Int16Array(pcmData);
+                    const wavBlob = pcmToWav(pcm16, sampleRate);
+                    const audioUrl = URL.createObjectURL(wavBlob);
+
+                    // Play the audio
+                    if (!audioContext) {
+                        audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: sampleRate });
+                    }
+                    const audio = new Audio(audioUrl);
+                    
+                    audio.onended = () => { URL.revokeObjectURL(audioUrl); };
+                    audio.play();
+                }
+
+            } catch (error) {
+                console.warn("TTS Failed (network or API):", error);
+            }
+        }
+
+        function formatStructuredOutput(data) {
+            if (!Array.isArray(data) || data.length === 0) return "ORION: No specific plan data received. Please adjust your query.";
+
+            let html = '<div class="mt-2 text-yellow-300 font-bold border-b border-yellow-700 pb-1">-- STRUCTURED PLAN INITIATED --</div>';
+            html += '<table class="w-full text-left mt-2 border-collapse">';
+            html += '<thead><tr class="text-cyan-400 text-xs uppercase">';
+            html += '<th class="p-1">Step</th><th class="p-1">Location</th><th class="p-1">Action</th><th class="p-1">Details</th></tr></thead><tbody>';
+            
+            data.forEach(item => {
+                html += '<tr class="border-t border-gray-700">';
+                html += `<td class="p-1">${item.step || '-'}</td>`;
+                html += `<td class="p-1">${item.location || '-'}</td>`;
+                html += `<td class="p-1 text-green-300">${item.action || '-'}</td>`;
+                html += `<td class="p-1">${item.details || '-'}</td>`;
+                html += '</tr>';
+            });
+
+            html += '</tbody></table>';
+            html += '<div class="mt-2 text-yellow-300 font-bold border-t border-yellow-700 pt-1">-- PLAN COMPLETE --</div>';
+            return html;
+        }
+
+
+        async function executeCommand(isStructured = false) {
+            const commandInput = document.getElementById('command-input');
+            const logArea = document.getElementById('orion-log');
+            
+            const commandText = commandInput.value.trim();
+
+            if (!window.geminiKey) {
+                 logArea.innerHTML += `<div class="text-red-400 my-1 log-entry">> ERROR: System not authorized. Enter API Key.</div>`;
+                 logArea.scrollTop = logArea.scrollHeight;
+                 return;
+            }
+            if (window.isProcessing) return;
+
+            if (!commandText) {
+                logArea.innerHTML += `<div class="text-red-400 my-1 log-entry">> ERROR: Command input is empty.</div>`;
+                logArea.scrollTop = logArea.scrollHeight;
+                return;
+            }
+
+            // Append user command to log
+            logArea.innerHTML += `<div class="text-cyan-400 my-1 log-entry">> PILOT: ${commandText}</div>`;
+            logArea.scrollTop = logArea.scrollHeight;
+            
+            // Clear input for new command
+            commandInput.value = '';
+            
+            // Call the actual AI
+            const { text, sources } = await callGeminiAPI(commandText, isStructured);
+
+            // Append AI response to log
+            logArea.innerHTML += `<div class="text-green-400 my-1 log-entry">> ORION: ${text}</div>`;
+            
+            // Append sources if available
+            if (sources && sources.length > 0) {
+                let sourceHtml = '<div class="text-sm text-gray-500 my-1 log-entry">Source(s): ';
+                sources.forEach((s, i) => {
+                    sourceHtml += `<a href="${s.uri}" target="_blank" class="text-blue-400 hover:text-blue-300">${s.title.substring(0, 50)}...</a>${i < sources.length - 1 ? ' | ' : ''}`;
+                });
+                sourceHtml += '</div>';
+                logArea.innerHTML += sourceHtml;
+            }
+
+            logArea.scrollTop = logArea.scrollHeight;
+
+            // Start TTS playback
+            speakText(text);
+        }
+
+        // --- 6. INITIALIZATION ---
+        window.onload = function() {
+            // Wait for Firebase module to load before attempting to init
+            if (window.firebase) {
+                initFirebase();
+            } else {
+                // Poll for firebase object if script loading is asynchronous
+                const interval = setInterval(() => {
+                    if (window.firebase) {
+                        clearInterval(interval);
+                        initFirebase();
+                    }
+                }, 100);
+            }
+
+            // Set initial mute button state to ON (unmuted)
+            window.isMuted = true; 
+            toggleMute(); // This executes, setting isMuted to false and showing "Mute OFF"
+        };
+
+    </script>
+
+    <!-- Main Application Container -->
+    <div class="w-full max-w-4xl p-6 bg-gray-900 rounded-xl shadow-2xl glow-box backdrop-blur-sm bg-opacity-90">
+        
+        <!-- Header - Always Visible -->
+        <header class="mb-6 border-b border-cyan-700 pb-4 flex justify-between items-center">
+            <div>
+                <h1 class="text-3xl font-extrabold text-neon tracking-wider">
+                    ORION AI 
+                    <span class="text-xl font-light text-cyan-400">Pilot Assistant v3.0</span>
+                </h1>
+                <p id="userIdDisplay" class="text-sm text-gray-500 mt-1">Pilot ID: Initializing...</p>
+            </div>
+            <!-- Loading Indicator -->
+            <div id="loading-indicator" class="hidden text-yellow-400 font-semibold animate-pulse">
+                ORION is calculating...
+            </div>
+        </header>
+
+        <!-- 1. Authorization Panel (Initially Visible if key not persisted) -->
+        <div id="auth-panel">
+            <div class="p-6 bg-gray-800 rounded-lg border border-red-600">
+                <h2 class="text-xl font-semibold text-red-400 mb-4">
+                    <span class="inline-block w-3 h-3 bg-red-500 rounded-full mr-2 animate-pulse"></span>
+                    System Access Required
+                </h2>
+                
+                <p class="text-gray-400 mb-4">
+                    Status: <span class="text-yellow-400 font-mono">Key not set. AI services disabled. Enter key below.</span>
+                </p>
+
+                <!-- API Key Input -->
+                <div class="mb-4">
+                    <label for="api-key-input" class="block text-sm font-medium text-cyan-300 mb-2">
+                        Enter Gemini API Key: 
+                        <span class="text-xs text-gray-400 block font-light mt-1">
+                            (This key will be securely saved to your private configuration in Firestore.)
+                        </span>
+                    </label>
+                    <input type="text" id="api-key-input" placeholder="AIzaSy..."
+                           class="w-full p-3 rounded-lg text-white transition duration-150">
+                </div>
+
+                <!-- Error Message Display -->
+                <p id="error-message" class="text-red-400 text-sm mb-4 hidden"></p>
+
+                <!-- Authorization Button -->
+                <button onclick="authorizeSystem()"
+                        class="w-full py-3 rounded-lg bg-cyan-600 hover:bg-cyan-700 text-white font-bold text-lg transition duration-200 ease-in-out transform hover:scale-[1.01] hover:shadow-lg focus:outline-none focus:ring-4 focus:ring-cyan-500 focus:ring-opacity-50">
+                    Authorize System (Save Key)
+                </button>
+            </div>
+        </div>
+
+        <!-- 2. Main System Panel (Initially Hidden) -->
+        <div id="main-system" class="hidden">
+            <div class="p-6 bg-gray-800 rounded-lg glow-box">
+                <h2 class="text-2xl font-semibold text-neon mb-4">
+                    <span class="inline-block w-3 h-3 bg-green-500 rounded-full mr-2"></span>
+                    System Status: <span class="text-green-400 font-mono">Online</span>
+                </h2>
+                
+                <p class="text-gray-300 mb-4">
+                    Orion AI is initialized and ready. Command module engaged.
+                </p>
+
+                <!-- Command Input and EXECUTE Button -->
+                <div class="flex mb-4">
+                    <input type="text" id="command-input" placeholder="Enter pilot command (e.g., 'What's the best fighter to buy?')"
+                           class="flex-grow p-3 rounded-l-lg bg-gray-700 text-white border border-cyan-600 focus:ring-2 focus:ring-cyan-400 focus:border-cyan-400">
+                    <button id="execute-button" onclick="executeCommand()"
+                            class="px-5 py-3 rounded-r-lg bg-cyan-600 hover:bg-cyan-700 text-white font-semibold transition duration-150">
+                        EXECUTE
+                    </button>
+                </div>
+                
+                <!-- Action Buttons: grid-cols-3 for Voice, Mute, and Plan -->
+                <div class="grid grid-cols-3 gap-3 mb-6">
+                    <button onclick="toggleMute()" id="mute-button"
+                            class="py-2 rounded-lg text-white font-semibold transition duration-150">
+                        <!-- Initial state is set via JS onload -->
+                    </button>
+                    <button onclick="startVoiceCommand()" id="voice-button"
+                            class="py-2 rounded-lg bg-yellow-600 hover:bg-yellow-700 text-white font-semibold transition duration-150">
+                        🎙️ Voice Command
+                    </button>
+                  <!--  <button onclick="executeCommand(true)"
+                            class="py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-semibold transition duration-150">
+                        🗺️ PLAN ROUTE
+                    </button> -->
+                </div>
+
+                <!-- Response Log Area -->
+                <div class="mt-4">
+                    <h3 class="text-lg font-semibold text-cyan-400 mb-2">Orion Log:</h3>
+                    <div id="orion-log" class="h-64 p-4 overflow-y-auto bg-gray-900 rounded-lg border border-cyan-700 text-sm text-gray-300 font-mono">
+                        System initialized. Waiting for API key...
+                    </div>
+                </div>
+
+                <!-- Reset Button -->
+                <div class="mt-6 text-center">
+                    <button onclick="resetAuthorization()" class="text-sm text-gray-500 hover:text-red-400 transition duration-150">
+                        <small>Deactivate/Re-Authorize System</small>
+                    </button>
+                </div>
+
+<!-- NEW: Buy Me A Coffee/Support Link -->
+                <div class="mt-4 pt-4 border-t border-gray-700 text-center">
+                    <a href="https://www.buymeacoffee.com/AtishD" target="_blank"
+                       class="inline-block px-4 py-2 rounded-lg bg-pink-700 hover:bg-pink-800 text-white font-semibold text-sm transition duration-150 shadow-lg glow-box">
+                        ☕ Support Orion AI (Buy Me A Coffee)
+                    </a>
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+</body>
+</html>
