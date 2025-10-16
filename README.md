@@ -1,12 +1,14 @@
 # SC-Orion-AI-Assistant
-My Star Citizen Pilot AI Assistant
-Orion AI Pilot Assistant: Command Console
+
+
+**Orion AI is a specialized, single-file web application designed to act as an in-universe command assistant for the Star Citizen universe. It leverages the power of the Gemini API and Google Search Grounding to provide real-time, context-aware responses to complex, natural language pilot commands.** 
+
+**I am a new player to Star Citizen and often i need info in game. I am not a professional coder, but i designed this simple AI app to provide me all the info i need on the go without needing to go search google and filter websites. This is easy and fast to get info while playing Star Citizen. If you like the app, please buy me a coffee, there is a link on the app. just click and support, it will help me a lot.**
 
 Link: https://atce80.github.io/SC-Orion-AI-Assistant/Star%20Citizen%20AI%20Pilot%20Assistant.html
 
 You can bookmark the link and directly access the app. No need to download anything. 
 
-**Orion AI is a specialized, single-file web application designed to act as an in-universe command assistant for the Star Citizen universe. It leverages the power of the Gemini API and Google Search Grounding to provide real-time, context-aware responses to complex, natural language pilot commands.**
 
 **Key Features**
 
@@ -49,3 +51,5 @@ CRITICAL STEP: This key is your personal credential for accessing Google's AI mo
 7. Click "Save Key".
 
 Once saved, the app will securely store it using Firebase and you'll be ready to start sending commands to your AI assistant!
+
+Buy me a coffee if you like it.
