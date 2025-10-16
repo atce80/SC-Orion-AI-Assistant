@@ -2,6 +2,8 @@
 My Star Citizen Pilot AI Assistant
 Orion AI Pilot Assistant: Command Console
 
+Link: https://atce80.github.io/SC-Orion-AI-Assistant/Star%20Citizen%20AI%20Pilot%20Assistant.html
+
 Orion AI is a specialized, single-file web application designed to act as an in-universe command assistant for the Star Citizen universe. It leverages the power of the Gemini API and Google Search Grounding to provide real-time, context-aware responses to complex, natural language pilot commands.
 
 Key Features
