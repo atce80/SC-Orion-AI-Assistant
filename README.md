@@ -1,13 +1,22 @@
 # SC-Orion-AI-Assistant
 
 
-**Orion AI is a specialized, single-file web application designed to act as an in-universe command assistant for the Star Citizen universe. It leverages the power of the Gemini API and Google Search Grounding to provide real-time, context-aware responses to complex, natural language pilot commands.** 
+**Orion AI is a specialized, single-file web application designed to act as an in-universe command assistant for the Star Citizen universe. It leverages the power of the Gemini API and Google Search Grounding to provide real-time, context-aware responses to complex, natural language pilot commands. This is your friendly AI assistant.** 
 
 **I am a new player to Star Citizen and often i need info in game. I am not a professional coder, but i designed this simple AI app to provide me all the info i need on the go without needing to go search google and filter websites. This is easy and fast to get info while playing Star Citizen. If you like the app, please buy me a coffee, there is a link on the app. just click and support, it will help me a lot.**
 
 Link: https://atce80.github.io/SC-Orion-AI-Assistant/Star%20Citizen%20AI%20Pilot%20Assistant.html
 
 You can bookmark the link and directly access the app. No need to download anything. 
+
+Some commands to get you started are:
+1. "You can address me as Zeus"
+2. "Where can i sell gold in stanton"
+3. "Where can i buy drugs"
+4. "What is the rental price for a titan and where can i get it from"
+
+<img width="922" height="833" alt="image" src="https://github.com/user-attachments/assets/3f17879a-9638-4be5-ad9b-69505cc30883" />
+
 
 
 **Key Features**
