@@ -10,7 +10,7 @@ Link: https://atce80.github.io/SC-Orion-AI-Assistant/Star%20Citizen%20AI%20Pilot
 You can bookmark the link and directly access the app via the link above. No need to download anything. 
 
 Some commands to get you started are:
-1. "You can address me as Zeus"
+1. "You can address me as XXX"
 2. "Where can i sell gold in stanton"
 3. "Where can i buy drugs"
 4. "What is the rental price for a titan and where can i get it from"
